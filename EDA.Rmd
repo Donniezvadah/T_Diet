@@ -1,0 +1,53 @@
+
+
+# Load libraries where the functions are stored
+
+```{r}
+rm(list=ls())
+library(dplyr)
+library(hmmTMB) # R package for fitting hidden markov models
+library(ggplot2)
+library(readxl)
+```
+
+# Load the nutrition dataset
+```{r}
+nutrition_data <- read_excel("sampled_data_nutrition.xlsx")
+```
+
+# View the first few rows of the dataset
+```{r}
+head(nutrition_data)
+```
+
+# View the structure of the dataset
+```{r}
+str(nutrition_data)
+```
+
+# View the summary of the dataset
+```{r}
+summary(nutrition_data)
+```
+
+# View the missing values in the dataset
+```{r}
+summary(is.na(nutrition_data))
+```
+
+#View Data in a Table 
+```{r}
+View(nutrition_data)
+```
+#Setting seed for reproducibility
+```{r}
+set.seed(27011998)
+```
+
+#Selecting relevant columns for the hidden Markov model
+```{r}
+nutrition_data$IDNumber <- as.factor(nutrition_data$IDNumber)
+```
+
+
+
