@@ -30,6 +30,398 @@ str(nutrition_data)
 summary(nutrition_data)
 ```
 
+# ===============================================================================
+# HIDDEN MARKOV MODEL ANALYSIS USING hmmTMB
+# ===============================================================================
+
+# Load additional libraries for HMM analysis
+```{r}
+library(tidyr)      # Data tidying for reshaping
+library(magrittr)   # Pipe operators
+```
+
+# Extract food group percentage variables (56-73) for hmmTMB analysis
+# According to documentation: Food groups Percentage Energy Contribution
+# These represent the proportion of total energy from each of 18 food groups
+```{r}
+# First, let's examine the column names to identify food group variables
+cat("Total columns:", ncol(nutrition_data), "\n")
+cat("Column names:\n")
+print(names(nutrition_data))
+
+# Look for columns that might be food group percentages (56-73)
+# Try different naming patterns that might match the food group variables
+possible_fg_patterns <- c(
+  "FG.*Percentage", "Percentage.*FG", "Food.*Group", 
+  "Energy.*Contribution", "FG[0-9]+", "food_group"
+)
+
+food_group_cols <- c()
+for (pattern in possible_fg_patterns) {
+  matches <- grep(pattern, names(nutrition_data), ignore.case = TRUE, value = TRUE)
+  if (length(matches) > 0) {
+    food_group_cols <- c(food_group_cols, matches)
+    cat("Found", length(matches), "columns matching pattern:", pattern, "\n")
+    print(matches)
+  }
+}
+
+# If no clear pattern found, use position-based selection (columns 56-73)
+if (length(food_group_cols) == 0) {
+  if (ncol(nutrition_data) >= 73) {
+    food_group_cols <- names(nutrition_data)[56:73]
+    cat("Using position-based selection for columns 56-73:\n")
+    print(food_group_cols)
+  } else {
+    cat("Dataset has fewer than 73 columns. Using last 18 columns as food groups:\n")
+    food_group_cols <- tail(names(nutrition_data), 18)
+    print(food_group_cols)
+  }
+}
+
+# Remove duplicates if any
+food_group_cols <- unique(food_group_cols)
+cat("Final food group columns to use:", length(food_group_cols), "\n")
+```
+
+# Extract and examine food group data
+```{r}
+# Create food group dataset
+food_group_data <- nutrition_data %>% 
+  select(all_of(food_group_cols))
+
+cat("Food group data dimensions:", dim(food_group_data), "\n")
+cat("Summary of food group percentages:\n")
+print(summary(food_group_data))
+
+# Check for missing values
+cat("Missing values per food group:\n")
+missing_values <- colSums(is.na(food_group_data))
+print(missing_values)
+
+# Visualize distribution of each food group percentage
+par(mfrow = c(3, 3))  # Create 3x3 grid for plots
+for (i in 1:min(9, length(food_group_cols))) {
+  hist(food_group_data[[i]], 
+       main = paste("Distribution of", food_group_cols[i]),
+       xlab = "Percentage",
+       col = "lightblue",
+       breaks = 20)
+}
+par(mfrow = c(1, 1))  # Reset to single plot
+```
+
+# Data preprocessing for hmmTMB
+```{r}
+# Remove rows with missing values in food group variables
+# hmmTMB requires complete cases for model fitting
+complete_indices <- complete.cases(food_group_data)
+complete_data <- food_group_data[complete_indices, ]
+
+cat("Original observations:", nrow(food_group_data), "\n")
+cat("Complete cases:", nrow(complete_data), "\n")
+cat("Removed due to missing values:", nrow(food_group_data) - nrow(complete_data), "\n")
+
+# Standardize the food group percentages
+# This helps with model convergence and makes parameters more interpretable
+# Each food group will have mean=0 and standard deviation=1
+scaled_data <- scale(complete_data)
+scaled_data <- as.data.frame(scaled_data)
+names(scaled_data) <- food_group_cols
+
+cat("Data after scaling - summary:\n")
+print(summary(scaled_data))
+```
+
+# Basic Hidden Markov Model fitting with hmmTMB
+```{r}
+# Define the number of hidden states for the nutritional patterns
+# We'll start with 3 states representing different dietary patterns:
+# State 1: Low energy intake pattern
+# State 2: Moderate/balanced pattern  
+# State 3: High energy intake pattern
+n_states <- 3
+
+# Create observation formula for hmmTMB
+# ~ 1 indicates intercept-only model (no covariates on observation parameters)
+# The response variables are the 18 food group percentages
+obs_formula <- as.formula("~ 1")
+
+cat("Fitting basic Hidden Markov Model with", n_states, "states...\n")
+
+# Fit the hmmTMB model with extensive comments on each parameter
+basic_hmm <- tryCatch({
+  hmmTMB::fit_hmm(
+    par = NULL,                    # Initial parameter values - NULL for automatic initialization
+                                   # hmmTMB will choose reasonable starting values based on data
+    
+    formula = obs_formula,         # Observation model formula
+                                   # Defines how observations depend on hidden states
+                                   # ~ 1 means each state has its own mean vector for food groups
+    
+    data = scaled_data,            # Observation data - scaled food group percentages
+                                   # Must be complete cases (no missing values)
+    
+    family = gaussian(),           # Distribution family for observations
+                                   # Gaussian (normal) distribution for continuous percentage data
+                                   # Could also use other distributions like beta for bounded data
+    
+    n_states = n_states,           # Number of hidden states in the model
+                                   # Each state represents a different dietary pattern
+                                   # More states allow more complex patterns but harder to interpret
+    
+    optimizer = "NLopt"            # Optimization algorithm for maximum likelihood estimation
+                                   # NLopt is a sophisticated optimization library
+                                   # Other options include "optim" or "nlminb"
+  )
+}, error = function(e) {
+  cat("Error in basic model fitting:", e$message, "\n")
+  cat("This might be due to:\n")
+  cat("- Insufficient data for the number of states\n")
+  cat("- Poor initial parameter values\n")
+  cat("- Numerical issues with the optimization\n")
+  return(NULL)
+})
+
+# Check if model fitting was successful
+if (!is.null(basic_hmm)) {
+  cat("Model fitted successfully!\n")
+  cat("Convergence code:", basic_hmm$optim_info$convergence, "(0 = successful)\n")
+  cat("Number of iterations:", basic_hmm$optim_info$iterations, "\n")
+  cat("Log-likelihood:", basic_hmm$loglik, "\n")
+  cat("AIC:", AIC(basic_hmm), "\n")
+} else {
+  cat("Model fitting failed. Trying with fewer states...\n")
+  
+  # Try with 2 states if 3 states failed
+  n_states <- 2
+  basic_hmm <- tryCatch({
+    hmmTMB::fit_hmm(
+      par = NULL,
+      formula = obs_formula,
+      data = scaled_data,
+      family = gaussian(),
+      n_states = n_states,
+      optimizer = "NLopt"
+    )
+  }, error = function(e) {
+    cat("Error with 2 states:", e$message, "\n")
+    return(NULL)
+  })
+  
+  if (!is.null(basic_hmm)) {
+    cat("2-state model fitted successfully!\n")
+  }
+}
+```
+
+# Analyze model results if fitting was successful
+```{r}
+if (!is.null(basic_hmm)) {
+  cat("=== HIDDEN MARKOV MODEL RESULTS ===\n")
+  
+  # State-dependent means (average food group percentages for each dietary pattern)
+  cat("\nState-dependent means (in standardized units):\n")
+  print(basic_hmm$par$obs)
+  
+  # Convert back to original scale for interpretation
+  state_means_original <- t(apply(basic_hmm$par$obs, 1, function(mean_std) {
+    # Convert from standardized back to original scale
+    # Original scale = standardized * sd + mean
+    mean_std * attr(scaled_data, "scaled:scale") + attr(scaled_data, "scaled:center")
+  }))
+  colnames(state_means_original) <- food_group_cols
+  rownames(state_means_original) <- paste("State", 1:nrow(state_means_original))
+  
+  cat("\nState-dependent means (original percentage scale):\n")
+  print(round(state_means_original, 2))
+  
+  # Transition probability matrix
+  # Shows probability of switching from one dietary pattern to another
+  cat("\nTransition probability matrix:\n")
+  cat("Rows = current state, Columns = next state\n")
+  print(round(basic_hmm$par$tpm, 3))
+  
+  # Stationary distribution (long-term proportion of time in each state)
+  cat("\nStationary distribution (long-term state probabilities):\n")
+  print(round(basic_hmm$par$delta, 3))
+  
+  # Interpretation of states based on food group patterns
+  cat("\n=== STATE INTERPRETATION ===\n")
+  for (i in 1:nrow(state_means_original)) {
+    cat("State", i, "characterized by:\n")
+    
+    # Find food groups with highest and lowest percentages in this state
+    sorted_groups <- sort(state_means_original[i, ], decreasing = TRUE)
+    
+    cat("  Highest contributing food groups:\n")
+    for (j in 1:min(3, length(sorted_groups))) {
+      cat("    ", names(sorted_groups)[j], ":", round(sorted_groups[j], 1), "%\n")
+    }
+    
+    cat("  Lowest contributing food groups:\n")
+    for (j in length(sorted_groups):(max(1, length(sorted_groups)-2))) {
+      cat("    ", names(sorted_groups)[j], ":", round(sorted_groups[j], 1), "%\n")
+    }
+    cat("\n")
+  }
+} else {
+  cat("No model results to display - model fitting failed\n")
+}
+```
+
+# State decoding and visualization
+```{r}
+if (!is.null(basic_hmm)) {
+  # Decode the most likely state sequence using Viterbi algorithm
+  # This gives us the single most likely sequence of hidden states
+  cat("Decoding most likely state sequence...\n")
+  viterbi_states <- hmmTMB::viterbi(basic_hmm, scaled_data)
+  
+  # Get state probabilities (forward-backward algorithm)
+  # This gives us the probability of being in each state at each time point
+  cat("Calculating state probabilities...\n")
+  state_probs <- hmmTMB::state_probs(basic_hmm, scaled_data)
+  
+  # Create analysis dataset with decoded states
+  analysis_data <- scaled_data
+  analysis_data$decoded_state <- factor(viterbi_states)
+  analysis_data$time_index <- 1:nrow(analysis_data)
+  analysis_data$state_prob_max <- apply(state_probs, 1, max)
+  
+  # Summary of state assignments
+  cat("State assignment summary:\n")
+  state_summary <- table(analysis_data$decoded_state)
+  print(state_summary)
+  
+  cat("Proportion of observations in each state:\n")
+  print(prop.table(state_summary))
+  
+  # Visualize state sequence over time
+  plot(analysis_data$time_index, analysis_data$decoded_state,
+       main = "Decoded Dietary States Over Time",
+       xlab = "Observation Index",
+       ylab = "Hidden State (Dietary Pattern)",
+       col = as.numeric(analysis_data$decoded_state),
+       pch = 16,
+       cex = 0.8)
+  
+  # Add lines to show state persistence
+  lines(analysis_data$time_index, as.numeric(analysis_data$decoded_state), 
+        col = "gray", lty = 2, alpha = 0.5)
+  
+  # Visualize state probabilities
+  matplot(state_probs, type = "l", lty = 1,
+          main = "State Probabilities Over Time",
+          xlab = "Observation Index",
+          ylab = "Probability",
+          col = rainbow(length(unique(viterbi_states))))
+  legend("topright", paste("State", 1:length(unique(viterbi_states))), 
+         col = rainbow(length(unique(viterbi_states))), lty = 1)
+  
+  # Heatmap of state means by food group
+  state_means_for_plot <- state_means_original
+  heatmap(state_means_for_plot,
+          main = "Heatmap of Food Group Percentages by State",
+          xlab = "Food Groups",
+          ylab = "States",
+          scale = "column",
+          margins = c(5, 10),
+          col = heat.colors(20))
+  
+} else {
+  cat("Cannot create visualizations - model fitting failed\n")
+}
+```
+
+# Model diagnostics and validation
+```{r}
+if (!is.null(basic_hmm)) {
+  cat("=== MODEL DIAGNOSTICS ===\n")
+  
+  # Check model convergence
+  cat("Convergence diagnostics:\n")
+  cat("Final gradient norm:", basic_hmm$optim_info$gradient_norm, "\n")
+  cat("Convergence code:", basic_hmm$optim_info$convergence, "\n")
+  cat("(0 = successful convergence)\n")
+  
+  # Parameter estimates and standard errors
+  cat("\nParameter estimates:\n")
+  print(summary(basic_hmm))
+  
+  # Residual analysis (if available)
+  # Check if residuals are provided by the model
+  if ("residuals" %in% names(basic_hmm)) {
+    cat("\nResidual analysis:\n")
+    residuals <- residuals(basic_hmm)
+    
+    # Plot residuals
+    plot(residuals, main = "Model Residuals", ylab = "Residuals")
+    abline(h = 0, col = "red", lty = 2)
+    
+    # Q-Q plot for normality
+    qqnorm(residuals)
+    qqline(residuals, col = "red")
+  }
+  
+  # Likelihood-based diagnostics
+  cat("\nLikelihood-based diagnostics:\n")
+  cat("Log-likelihood:", basic_hmm$loglik, "\n")
+  cat("AIC:", AIC(basic_hmm), "\n")
+  cat("BIC:", BIC(basic_hmm), "\n")
+  
+  # Calculate number of parameters
+  n_params <- length(basic_hmm$par$obs) + 
+              length(basic_hmm$par$tpm) + 
+              length(basic_hmm$par$delta) - 1
+  cat("Number of parameters:", n_params, "\n")
+  
+  # Information criteria per parameter
+  cat("AIC per parameter:", AIC(basic_hmm)/n_params, "\n")
+  cat("BIC per parameter:", BIC(basic_hmm)/n_params, "\n")
+  
+} else {
+  cat("No diagnostics available - model fitting failed\n")
+}
+```
+
+# Save results
+```{r}
+if (!is.null(basic_hmm)) {
+  # Save the fitted model
+  saveRDS(basic_hmm, "nutrition_hmm_model.rds")
+  cat("Model saved as 'nutrition_hmm_model.rds'\n")
+  
+  # Save analysis results
+  analysis_results <- list(
+    model = basic_hmm,
+    food_group_columns = food_group_cols,
+    state_means_original = state_means_original,
+    viterbi_states = viterbi_states,
+    state_probs = state_probs,
+    analysis_data = analysis_data
+  )
+  
+  saveRDS(analysis_results, "nutrition_hmm_analysis_results.rds")
+  cat("Analysis results saved as 'nutrition_hmm_analysis_results.rds'\n")
+  
+  # Create summary report
+  cat("\n=== ANALYSIS SUMMARY ===\n")
+  cat("Dataset:", nrow(nutrition_data), "observations,", ncol(nutrition_data), "variables\n")
+  cat("Food groups analyzed:", length(food_group_cols), "\n")
+  cat("Complete cases used:", nrow(complete_data), "\n")
+  cat("Number of hidden states:", n_states, "\n")
+  cat("Model AIC:", round(AIC(basic_hmm), 2), "\n")
+  cat("Model BIC:", round(BIC(basic_hmm), 2), "\n")
+  
+  cat("\nMost common state:", names(which.max(table(viterbi_states))), 
+      "with", max(table(viterbi_states)), "observations\n")
+  
+} else {
+  cat("No results to save - model fitting failed\n")
+}
+```
+
 # View the missing values in the dataset
 ```{r}
 summary(is.na(nutrition_data))
