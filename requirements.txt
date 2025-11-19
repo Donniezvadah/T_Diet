@@ -1,0 +1,58 @@
+tidyverse          # Core data science suite: ggplot2, dplyr, tidyr, readr, etc.
+data.table         # High-performance data manipulation for large datasets
+dplyr              # Grammar of data manipulation (select, filter, mutate)
+tidyr              # Data tidying (pivoting, reshaping, missing handling)
+lubridate          # Date/time parsing and manipulation
+stringr            # Consistent tools for string processing
+
+readxl             # Read Excel (.xlsx, .xls) files
+writexl            # Write Excel (.xlsx) files
+openxlsx           # Advanced Excel reading/writing with formatting support
+
+stats              # Base R statistical functions (models, tests, distributions)
+car                # Regression diagnostics, ANOVA, advanced statistical functions
+MASS               # Applied statistics (Venables & Ripley), many classic methods
+nlme               # Nonlinear and linear mixed-effects models
+lme4               # Fast linear/mixed-effects model estimation (lmer, glmer)
+lmerTest           # p-values for lme4::lmer() mixed models
+
+ggplot2            # Grammar of graphics framework for visualization
+ggplot2.extensions # Extra geoms, stats, and utilities for ggplot2
+ggpubr             # Publication-ready visualizations built on ggplot2
+patchwork          # Combine multiple ggplots using intuitive syntax
+cowplot            # Clean publication-quality themes for ggplot2
+scales             # Scaling functions for visualization (percent, color handling)
+RColorBrewer       # Color palettes for discrete/continuous visualizations
+viridis            # Colorblind-friendly palettes for scientific visualization
+
+ggfortify          # Autoplot support for many statistical model objects
+broom              # Convert model outputs to tidy tibbles
+broom.mixed        # broom methods for lme4 and other mixed model objects
+emmeans            # Estimated marginal means (LS-means) for models
+effects            # Visual and numerical effect displays for regression models
+
+zoo                # Regular/irregular time series infrastructure
+xts                # Extensible time series with fast subsetting/plotting
+tsibble            # Tidy temporal data format (for forecasting workflows)
+
+knitr              # Dynamic R Markdown report generation
+kableExtra         # Enhanced table styling for knitr::kable
+gt                 # Grammar of tables for beautiful outputs
+flextable          # Flexible table creation for HTML/Word/PowerPoint
+
+naniar             # Missing data visualization and summaries
+VIM                # Visualizing and imputing missing values
+mice               # Multivariate imputation by chained equations
+
+corrplot           # Visual correlation matrices
+Hmisc              # Utility functions (correlation, imputation, label handling)
+psych              # Psychometric analysis tools; descriptive statistics
+
+outliers           # Outlier detection tests
+DescTools          # Many practical statistical tools and descriptive measures
+
+validate           # Data validation rules and quality checks
+assertthat         # Readable assertions to enforce conditions on data
+
+microbenchmark     # High-precision code benchmarking
+profvis            # Interactive profiling and performance visualization
