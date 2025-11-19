@@ -54,7 +54,7 @@ For a **first-order** Markov chain (most common in HMMs):
 
 $$\mathbb{P}(S_t = j | S_{t-1} = i) = \Gamma_{ij}$$
 
-where $\boldsymbol{\Gamma} = [\Gamma_{ij}]_{i,j=1}^M$ is the **transition probability matrix** with $\sum_{j=1}^M \Gamma_{ij} = 1$ for all $i$.
+where $\boldsymbol{\Gamma} = [\Gamma_{ij}]_{i,j=1}^M $ is the **transition probability matrix** with $\sum_{j=1}^M \Gamma_{ij} = 1$ for all $i $.
 
 ---
 
