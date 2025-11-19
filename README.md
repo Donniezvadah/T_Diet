@@ -27,7 +27,7 @@ Hidden Markov Models (HMMs) have become a powerful statistical tool for modeling
 This document provides a comprehensive mathematical treatment of MHMMs, following the rigorous notation and framework established in Zucchini, MacDonald, and Langrock's seminal work *"Hidden Markov Models for Time Series: An Introduction Using R"* (2nd edition, 2016).
 
 ### Motivation for Multilevel HMMs
-
+---
 Traditional HMMs assume independence across observation sequences, which is often violated in practice when:
 - Multiple individuals are observed over time
 - Repeated measurements are taken from the same experimental units
@@ -54,7 +54,7 @@ For a **first-order** Markov chain (most common in HMMs):
 
 $$\mathbb{P}(S_t = j | S_{t-1} = i) = \Gamma_{ij}$$
 
-where $\boldsymbol{\Gamma} = [\Gamma_{ij}]_{i,j=1}^M $ is the **transition probability matrix** with $\sum_{j=1}^M \Gamma_{ij} = 1$ for all $i $.
+where $\boldsymbol{\Gamma} = [\Gamma_{ij}]_{i,j=1}^M$ is the **transition probability matrix** with $\sum_{j=1}^M \Gamma_{ij} = 1$ for all $i$.
 
 ---
 
