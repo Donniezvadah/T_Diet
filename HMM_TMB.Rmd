@@ -1,0 +1,118 @@
+---
+title: "HMM Analysis of Energy Prices"
+author: "Donnie"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(hmmTMB)
+library(compositions)
+library(zCompositions)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggalluvial)
+library(stringr)
+library(RColorBrewer)
+library(readxl)
+
+# Load sample data
+data("energy", package = "MSwM")
+```
+
+## 1. Initialize Hidden Markov Model
+
+```{r hmm-setup}
+hid <- MarkovChain$new(data = energy, n_states = 2)
+dists <- list(Price = "norm")
+par0 <- list(Price = list(mean = c(3, 6), sd = c(1, 1)))
+f <- list(
+  Price = list(
+    mean = ~ s(EurDol, k = 10, bs = 'cs'),
+    sd   = ~ poly(EurDol, 3)
+  )
+)
+obs <- Observation$new(
+  data      = energy,
+  n_states  = 2,
+  dists     = dists,
+  par       = par0,
+  formulas  = f
+)
+hmm <- HMM$new(hid = hid, obs = obs)
+hmm$fit(silent = TRUE)
+energy$viterbi <- factor(paste0("State ", hmm$viterbi()))
+```
+
+## 2. Visualize Observed Parameters
+
+```{r hmm-plot}
+hmm$plot(what = "obspar", var = "EurDol", i = "Price.mean") +
+  geom_point(
+    aes(x = EurDol, y = Price, fill = viterbi, col = viterbi),
+    data = energy, alpha = 0.3
+  ) +
+  theme(legend.position = "none")
+
+hmm$plot(what = "obspar", var = "EurDol", i = "Price.sd") +
+  theme(legend.position.inside = c(0.3, 0.7))
+```
+
+## 3. Predict PDFs Across EurDol Grid
+
+```{r predict-pdfs}
+EurDol <- seq(0.65, 1.15, by = 0.1)
+newdata <- data.frame(EurDol = EurDol)
+par <- hmm$predict(what = "obspar", newdata = newdata)
+w <- table(hmm$viterbi())/nrow(energy)
+grid <- seq(min(energy$Price), max(energy$Price), length = 100)
+
+pdf_ls <- lapply(1:dim(par)[3], function(i) {
+  p <- par[,,i]
+  pdf1 <- w[1] * dnorm(grid, mean = p["Price.mean", "state 1"], sd = p["Price.sd", "state 1"])
+  pdf2 <- w[2] * dnorm(grid, mean = p["Price.mean", "state 2"], sd = p["Price.sd", "state 2"])
+  res <- data.frame(
+    price = grid,
+    pdf = c(pdf1, pdf2),
+    state = factor(rep(1:2, each = length(grid))),
+    eurdol = paste0("EurDol = ", EurDol[i])
+  )
+  return(res)
+})
+
+pdf_df <- do.call(rbind, pdf_ls)
+```
+
+## 4. Plot PDFs
+
+### 4.1 PDF Lines Only
+
+```{r plot-pdf-lines}
+ggplot(pdf_df, aes(x = price, y = pdf, color = state)) +
+  geom_line(size = 1) +
+  facet_wrap(~eurdol) +
+  theme_bw() +
+  labs(x = "Price", y = "Density") +
+  scale_color_manual(values = hmmTMB:::hmmTMB_cols)
+```
+
+### 4.2 Overlay with Observed Histogram
+
+```{r plot-pdf-with-hist}
+ggplot(pdf_df, aes(x = price, y = pdf)) +
+  facet_wrap(~eurdol) +
+  geom_histogram(
+    aes(x = Price, y = ..density..),
+    bins = 20,
+    col = "white",
+    fill = "lightgrey",
+    alpha = 0.5,
+    data = energy
+  ) +
+  geom_line(aes(col = state), size = 1) +
+  theme_bw() +
+  labs(x = "Price", y = "Density") +
+  scale_color_manual(values = hmmTMB:::hmmTMB_cols)
+```
+
