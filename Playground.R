@@ -4,6 +4,8 @@
 library(tidyverse)    # Includes dplyr, tidyr, ggplot2, etc.
 library(hmmTMB)       # For fitting hidden Markov models
 library(readxl)       # For reading Excel files
+library(ggplot2) # For nice plots
+library(rlang) # For variable selection
 
 # Clear workspace
 rm(list = ls())
@@ -58,68 +60,272 @@ if (length(food_group_cols) == 0) {
 }
 
 # Create final dataset with complete cases only
-hmm_data <- nutrition_data %>% 
+clean_data <- nutrition_data %>% 
   select(all_of(c(id_col, time_col, food_group_cols))) %>%
   filter(complete.cases(.))
 
-# Convert food group columns to numeric and scale
-hmm_data <- hmm_data %>%
-  mutate(across(all_of(food_group_cols), ~ as.numeric(as.character(.)))) %>%
-  filter(complete.cases(.)) %>%
-  mutate(across(all_of(food_group_cols), ~ scale(.)[,1]))
+food_vars <- clean_data[food_group_cols]
+numeric_cols <- vapply(food_vars, is.numeric, logical(1L))
+if (!all(numeric_cols)) {
+  cat("Coercing non-numeric food group columns to numeric where possible...\n")
+  for (nm in names(food_vars)[!numeric_cols]) {
+    suppressWarnings({
+      food_vars[[nm]] <- as.numeric(food_vars[[nm]])
+    })
+  }
+}
+numeric_cols <- vapply(food_vars, is.numeric, logical(1L))
+if (!all(numeric_cols)) {
+  cat("Dropping food group columns that are still non-numeric after coercion:\n")
+  print(names(food_vars)[!numeric_cols])
+}
+food_vars <- food_vars[, numeric_cols, drop = FALSE]
+food_group_cols <- names(food_vars)
+clean_data <- clean_data %>%
+  dplyr::select(all_of(c(id_col, time_col)), all_of(food_group_cols))
 
-# Display final dataset information
-cat("\n=== Processed Dataset ===\n")
-cat("Final dimensions:", nrow(hmm_data), "rows x", ncol(hmm_data), "columns\n")
-cat("\nSelected columns:", paste(names(hmm_data), collapse = ", "), "\n")
+food_long <- clean_data %>%
+  dplyr::select(all_of(c(id_col, time_col, food_group_cols))) %>%
+  tidyr::pivot_longer(
+    cols = all_of(food_group_cols),
+    names_to = "food_group",
+    values_to = "value"
+  )
 
-# Summary of food group data
-cat("\n=== Food Group Summary ===\n")
-print(summary(hmm_data[food_group_cols]))
+food_long$time_factor <- as.factor(food_long[[time_col]])
+food_long$id_factor <- as.factor(food_long[[id_col]])
 
-# ===============================================================================
-# HMM MODEL FITTING
-# ===============================================================================
+cat("\n=== Detailed summary statistics by food group (overall) ===\n")
+summary_overall <- food_long %>%
+  dplyr::group_by(food_group) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean = mean(value, na.rm = TRUE),
+    sd = sd(value, na.rm = TRUE),
+    median = median(value, na.rm = TRUE),
+    p25 = stats::quantile(value, 0.25, na.rm = TRUE),
+    p75 = stats::quantile(value, 0.75, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    prop_zero = mean(value == 0, na.rm = TRUE),
+    prop_missing = mean(is.na(value))
+  )
+print(summary_overall, n = nrow(summary_overall))
 
-# Prepare data for hmmTMB
-cat("\n=== Preparing HMM Model ===\n")
+cat("\n=== Detailed summary statistics by food group and time ===\n")
+summary_by_time <- food_long %>%
+  dplyr::group_by(food_group, time_factor) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean = mean(value, na.rm = TRUE),
+    sd = sd(value, na.rm = TRUE),
+    median = median(value, na.rm = TRUE),
+    p25 = stats::quantile(value, 0.25, na.rm = TRUE),
+    p75 = stats::quantile(value, 0.75, na.rm = TRUE),
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    prop_zero = mean(value == 0, na.rm = TRUE),
+    prop_missing = mean(is.na(value))
+  )
+print(summary_by_time, n = nrow(summary_by_time))
 
-# Create observation matrix
-obs_matrix <- as.matrix(hmm_data[food_group_cols])
+cat("\n=== Visualisations: distributions of food groups ===\n")
+plot_density <- ggplot2::ggplot(food_long, ggplot2::aes(x = value)) +
+  ggplot2::geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  ggplot2::facet_wrap(~food_group, scales = "free") +
+  ggplot2::labs(x = "Value", y = "Count")
+print(plot_density)
 
-# Basic HMM with 2 states (can be adjusted)
-cat("Fitting HMM with 2 states...\n")
-basic_hmm <- hmmTMB(
-  obs = obs_matrix,
-  data = hmm_data,
-  n_states = 2,
-  formula = ~ 1,
-  family = list(gaussian())
+plot_box_time <- ggplot2::ggplot(food_long, ggplot2::aes(x = time_factor, y = value)) +
+  ggplot2::geom_boxplot(outlier.alpha = 0.3) +
+  ggplot2::facet_wrap(~food_group, scales = "free_y") +
+  ggplot2::labs(x = time_col, y = "Value")
+print(plot_box_time)
+
+cat("\n=== Visualisations: longitudinal trajectories by food group ===\n")
+plot_trajectories <- ggplot2::ggplot(
+  food_long,
+  ggplot2::aes(x = time_factor, y = value, group = id_factor)
+) +
+  ggplot2::geom_line(alpha = 0.2) +
+  ggplot2::facet_wrap(~food_group, scales = "free_y") +
+  ggplot2::labs(x = time_col, y = "Value")
+print(plot_trajectories)
+
+cat("\n=== Correlation structure between food groups ===\n")
+food_cor <- stats::cor(clean_data[food_group_cols], use = "pairwise.complete.obs")
+food_cor_df <- as.data.frame(as.table(food_cor))
+names(food_cor_df) <- c("var1", "var2", "correlation")
+plot_cor <- ggplot2::ggplot(food_cor_df, ggplot2::aes(x = var1, y = var2, fill = correlation)) +
+  ggplot2::geom_tile() +
+  ggplot2::scale_fill_distiller(palette = "RdBu", direction = -1) +
+  ggplot2::coord_equal() +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
+  ggplot2::labs(x = NULL, y = NULL)
+print(plot_cor)
+
+
+
+# ============================================================================== 
+# MODELING: PCA, FACTOR ANALYSIS, K-MEANS
+# ============================================================================== 
+
+# Matrix of food group variables
+food_matrix <- as.matrix(clean_data[food_group_cols])
+
+# PCA ------------------------------------------------------------------------
+pca_res <- prcomp(food_matrix, center = TRUE, scale. = TRUE)
+cat("\n=== PCA summary ===\n")
+print(summary(pca_res))
+
+# Add first two principal components to data
+clean_data <- clean_data %>%
+  mutate(
+    PC1 = pca_res$x[, 1],
+    PC2 = pca_res$x[, 2]
+  )
+
+# Factor analysis ------------------------------------------------------------
+fa_res <- factanal(x = food_matrix, factors = 2, scores = "regression")
+cat("\n=== Factor analysis loadings ===\n")
+print(fa_res$loadings)
+
+fa_scores <- as.data.frame(fa_res$scores)
+names(fa_scores) <- paste0("FA", seq_len(ncol(fa_scores)))
+
+clean_data <- bind_cols(clean_data, fa_scores)
+
+# K-means clustering ---------------------------------------------------------
+set.seed(123)
+kmeans_res <- kmeans(scale(food_matrix), centers = 3, nstart = 25)
+clean_data$cluster_k3 <- factor(kmeans_res$cluster)
+
+cat("\n=== Cluster sizes (k = 3) ===\n")
+print(table(clean_data$cluster_k3))
+
+cat("\n=== PCA: variance explained and scree data ===\n")
+pca_var <- pca_res$sdev^2
+pca_var_exp <- pca_var/sum(pca_var)
+pca_scree <- data.frame(
+  PC = seq_along(pca_var),
+  variance_explained = pca_var_exp,
+  cumulative_variance = cumsum(pca_var_exp)
 )
+print(pca_scree)
 
-# Display model summary
-if (!is.null(basic_hmm)) {
-  cat("\n=== HMM Model Summary ===\n")
-  print(summary(basic_hmm))
-  
-  # Extract and display state probabilities
-  states <- viterbi(basic_hmm)
-  cat("\nState assignments:")
-  print(table(states$state))
-  
-  # Plot state probabilities
-  plot_states <- ggplot(states, aes(x = .data[[time_col]], y = .data[[id_col]], fill = factor(state))) +
-    geom_tile() +
-    labs(title = "HMM State Assignments",
-         x = "Time",
-         y = "Subject ID",
-         fill = "State") +
-    theme_minimal()
-  
-  print(plot_states)
-  
-} else {
-  cat("Failed to fit HMM model\n")
+plot_scree <- ggplot2::ggplot(
+  pca_scree,
+  ggplot2::aes(x = PC, y = variance_explained)
+) +
+  ggplot2::geom_col(fill = "steelblue") +
+  ggplot2::geom_line(ggplot2::aes(y = cumulative_variance), color = "red") +
+  ggplot2::geom_point(ggplot2::aes(y = cumulative_variance), color = "red") +
+  ggplot2::scale_x_continuous(breaks = pca_scree$PC) +
+  ggplot2::labs(y = "Proportion of variance", x = "Principal component")
+print(plot_scree)
+
+cat("\n=== PCA: loadings for first components ===\n")
+pca_loadings <- as.data.frame(pca_res$rotation[, 1:2])
+pca_loadings$variable <- rownames(pca_res$rotation)
+print(pca_loadings)
+
+pca_loadings_long <- tidyr::pivot_longer(
+  pca_loadings,
+  cols = c("PC1", "PC2"),
+  names_to = "component",
+  values_to = "loading"
+)
+plot_loadings <- ggplot2::ggplot(
+  pca_loadings_long,
+  ggplot2::aes(x = variable, y = loading, fill = component)
+) +
+  ggplot2::geom_col(position = "dodge") +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
+  ggplot2::labs(x = "Food group", y = "Loading")
+print(plot_loadings)
+
+cat("\n=== PCA: individual scores on first two components ===\n")
+clean_data$time_factor <- as.factor(clean_data[[time_col]])
+plot_pca_time <- ggplot2::ggplot(
+  clean_data,
+  ggplot2::aes(x = PC1, y = PC2, color = time_factor)
+) +
+  ggplot2::geom_point(alpha = 0.7) +
+  ggplot2::labs(color = time_col)
+print(plot_pca_time)
+
+plot_pca_cluster <- ggplot2::ggplot(
+  clean_data,
+  ggplot2::aes(x = PC1, y = PC2, color = cluster_k3)
+) +
+  ggplot2::geom_point(alpha = 0.7) +
+  ggplot2::labs(color = "Cluster (k = 3)")
+print(plot_pca_cluster)
+
+cat("\n=== Factor analysis: loadings table and heatmap ===\n")
+fa_loadings <- as.matrix(fa_res$loadings)
+fa_loadings_df <- as.data.frame(fa_loadings)
+fa_loadings_df$variable <- rownames(fa_loadings)
+print(fa_loadings_df)
+
+fa_loadings_long <- tidyr::pivot_longer(
+  fa_loadings_df,
+  cols = -variable,
+  names_to = "factor",
+  values_to = "loading"
+)
+plot_fa_loadings <- ggplot2::ggplot(
+  fa_loadings_long,
+  ggplot2::aes(x = variable, y = factor, fill = loading)
+) +
+  ggplot2::geom_tile() +
+  ggplot2::scale_fill_distiller(palette = "RdBu", direction = -1) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
+  ggplot2::labs(x = "Food group", y = "Factor")
+print(plot_fa_loadings)
+
+cat("\n=== Factor analysis: individual scores on first two factors ===\n")
+if (ncol(fa_scores) >= 2) {
+  plot_fa_scores <- ggplot2::ggplot(
+    clean_data,
+    ggplot2::aes(x = FA1, y = FA2, color = time_factor)
+  ) +
+    ggplot2::geom_point(alpha = 0.7) +
+    ggplot2::labs(color = time_col)
+  print(plot_fa_scores)
 }
 
-cat("\nAnalysis complete.\n")
+cat("\n=== K-means: cluster centers (in scaled space) ===\n")
+cluster_centers <- as.data.frame(kmeans_res$centers)
+cluster_centers$cluster <- factor(seq_len(nrow(cluster_centers)))
+cluster_centers_long <- tidyr::pivot_longer(
+  cluster_centers,
+  cols = -cluster,
+  names_to = "variable",
+  values_to = "center"
+)
+print(cluster_centers_long, n = nrow(cluster_centers_long))
+
+plot_cluster_centers <- ggplot2::ggplot(
+  cluster_centers_long,
+  ggplot2::aes(x = variable, y = center, color = cluster, group = cluster)
+) +
+  ggplot2::geom_line() +
+  ggplot2::geom_point() +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
+  ggplot2::labs(x = "Food group (scaled)", y = "Cluster center")
+print(plot_cluster_centers)
+
+# Inspect final data with model outputs --------------------------------------
+cat("\n=== Final data with model outputs (first 6 rows) ===\n")
+print(utils::head(clean_data))
+
+# Show structure of the final dataset
+cat("\n=== Final dataset structure ===\n")
+str(clean_data)
+
+
+
+View(clean_data, "Compositional Data")
+
+
